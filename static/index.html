@@ -14,7 +14,8 @@
       <span class="app-title">LiveTranscribe</span>
     </div>
     <div class="header-right">
-      <span id="server-badge" class="badge offline" title="Whisper server status">● Server offline</span>
+      <span id="server-badge"  class="badge offline" title="Whisper server status">● Server offline</span>
+      <span id="ollama-badge"  class="badge offline" title="Ollama translation status">● Ollama offline</span>
       <button id="clear-btn"    class="icon-btn" title="Clear transcript">🗑</button>
       <button id="copy-btn"     class="icon-btn" title="Copy as text">📋</button>
       <button id="settings-btn" class="icon-btn" title="Settings">⚙</button>
@@ -103,6 +104,41 @@
           <label>Language
             <input id="s-mic-lang" type="text" maxlength="10"
               placeholder="e.g. en-US, vi-VN, es-ES">
+          </label>
+        </section>
+
+        <section class="setting-group">
+          <h3>Live Translation (Ollama)</h3>
+          <label class="toggle-label">
+            <input id="s-translation-enabled" type="checkbox">
+            <span>Enable live translation</span>
+          </label>
+
+          <label>Ollama URL
+            <div class="input-row">
+              <input id="s-ollama-url" type="text" spellcheck="false"
+                placeholder="http://localhost:11434">
+              <button id="s-ollama-test" class="btn-secondary">Test</button>
+            </div>
+            <span id="s-ollama-test-result" class="test-result"></span>
+          </label>
+
+          <label>Model
+            <input id="s-ollama-model" type="text" spellcheck="false"
+              placeholder="e.g. llama3, mistral, gemma3">
+          </label>
+
+          <label>Translate to
+            <input id="s-target-lang" type="text" maxlength="40"
+              placeholder="e.g. English, Vietnamese, Spanish">
+          </label>
+
+          <label>Translate which side
+            <select id="s-translate-side">
+              <option value="both">Both (You + Partner)</option>
+              <option value="partner">Partner only</option>
+              <option value="you">You only</option>
+            </select>
           </label>
         </section>
       </div>

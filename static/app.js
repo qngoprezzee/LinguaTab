@@ -10,11 +10,16 @@ function loadCfg() {
 function saveCfg(c) { localStorage.setItem(CFG_KEY, JSON.stringify(c)); }
 function defaultCfg() {
   return {
-    endpoint:      'http://127.0.0.1:5000',
-    model:         'base',
-    chunkInterval: 10,
-    language:      '',
-    micLang:       'en-US',
+    endpoint:           'http://127.0.0.1:5000',
+    model:              'base',
+    chunkInterval:      10,
+    language:           '',
+    micLang:            'en-US',
+    translationEnabled: false,
+    ollamaUrl:          'http://localhost:11434',
+    ollamaModel:        'llama3',
+    targetLang:         'English',
+    translateSide:      'both',
   };
 }
 
@@ -47,6 +52,16 @@ const sTest       = document.getElementById('s-test');
 const sTestResult = document.getElementById('s-test-result');
 const sSave       = document.getElementById('s-save');
 const sSaved      = document.getElementById('s-saved');
+
+// Translation settings inputs
+const sTranslationEnabled = document.getElementById('s-translation-enabled');
+const sOllamaUrl          = document.getElementById('s-ollama-url');
+const sOllamaModel        = document.getElementById('s-ollama-model');
+const sTargetLang         = document.getElementById('s-target-lang');
+const sTranslateSide      = document.getElementById('s-translate-side');
+const sOllamaTest         = document.getElementById('s-ollama-test');
+const sOllamaTestResult   = document.getElementById('s-ollama-test-result');
+const ollamaBadge         = document.getElementById('ollama-badge');
 
 // ── State ────────────────────────────────────────────────────────
 let isRecording    = false;
@@ -89,6 +104,35 @@ function setBadge(state, text) {
 checkServer();
 setInterval(checkServer, 8000);
 
+// ── Ollama health check ──────────────────────────────────────────
+async function checkOllama() {
+  if (!cfg.translationEnabled) {
+    setOllamaBadge('offline', '● Ollama offline');
+    return false;
+  }
+  try {
+    const res = await fetch(`${cfg.endpoint}/ollama/health`, { signal: AbortSignal.timeout(4000) });
+    if (res.ok) {
+      const d = await res.json();
+      setOllamaBadge('online', `● Ollama (${d.active_model})`);
+      return true;
+    }
+    setOllamaBadge('error', '● Ollama error');
+    return false;
+  } catch {
+    setOllamaBadge('offline', '● Ollama offline');
+    return false;
+  }
+}
+
+function setOllamaBadge(state, text) {
+  ollamaBadge.className = `badge ${state}`;
+  ollamaBadge.textContent = text;
+}
+
+checkOllama();
+setInterval(checkOllama, 8000);
+
 // ── Timer ────────────────────────────────────────────────────────
 function startTimer() {
   sessionStart = Date.now();
@@ -119,13 +163,43 @@ function addSegment(bodyEl, segArr, text) {
   // Remove placeholder
   bodyEl.querySelector('.empty-hint')?.remove();
 
-  const d   = new Date(seg.ts);
-  const t   = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const el  = document.createElement('div');
+  const d  = new Date(seg.ts);
+  const t  = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const el = document.createElement('div');
   el.className = 'seg';
-  el.innerHTML = `<span class="seg-text">${esc(text)}</span><span class="seg-time">${t}</span>`;
+  el.innerHTML = `<span class="seg-text">${esc(text)}</span>`
+    + `<span class="seg-translation"></span>`
+    + `<span class="seg-time">${t}</span>`;
   bodyEl.appendChild(el);
   bodyEl.scrollTop = bodyEl.scrollHeight;
+  return el;
+}
+
+// ── Translation ──────────────────────────────────────────────────
+async function translateSegment(text, segEl) {
+  if (!cfg.translationEnabled || !text) return;
+  const translEl = segEl.querySelector('.seg-translation');
+  if (!translEl) return;
+
+  translEl.textContent = 'Translating…';
+  translEl.classList.add('loading');
+
+  try {
+    const res = await fetch(`${cfg.endpoint}/v1/translate`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ text, target_lang: cfg.targetLang }),
+    });
+    if (res.ok) {
+      const { translation } = await res.json();
+      translEl.textContent = translation || '';
+    } else {
+      translEl.textContent = '';
+    }
+  } catch {
+    translEl.textContent = '';
+  }
+  translEl.classList.remove('loading');
 }
 
 // ── Mic pipeline — Web Speech API ────────────────────────────────
@@ -159,7 +233,12 @@ async function startMic() {
       const r = event.results[i];
       if (r.isFinal) {
         const text = r[0].transcript.trim();
-        if (text) addSegment(youBody, youSegs, text);
+        if (text) {
+          const el = addSegment(youBody, youSegs, text);
+          if (cfg.translateSide === 'both' || cfg.translateSide === 'you') {
+            translateSegment(text, el);
+          }
+        }
         youInterim.textContent = '';
       } else {
         interim += r[0].transcript;
@@ -248,7 +327,6 @@ function startPartnerRecorder() {
 
   function createRecorder() {
     const chunks = [];
-    const start  = Date.now();
     const rec    = new MediaRecorder(partnerStream, { mimeType });
 
     rec.ondataavailable = e => { if (e.data?.size > 0) chunks.push(e.data); };
@@ -292,7 +370,12 @@ async function sendToWhisper(blob) {
     }
     const { text } = await res.json();
     const trimmed  = (text || '').trim();
-    if (trimmed) addSegment(partnerBody, partnerSegs, trimmed);
+    if (trimmed) {
+      const el = addSegment(partnerBody, partnerSegs, trimmed);
+      if (cfg.translateSide === 'both' || cfg.translateSide === 'partner') {
+        translateSegment(trimmed, el);
+      }
+    }
   } catch (err) {
     console.error('Whisper fetch error:', err);
     setPill(tabPill, 'warn', 'Partner: server offline');
@@ -380,6 +463,15 @@ function openSettings() {
   sMicLang.value        = cfg.micLang;
   sTestResult.textContent = '';
   sTestResult.className   = 'test-result';
+
+  sTranslationEnabled.checked = cfg.translationEnabled;
+  sOllamaUrl.value            = cfg.ollamaUrl;
+  sOllamaModel.value          = cfg.ollamaModel;
+  sTargetLang.value           = cfg.targetLang;
+  sTranslateSide.value        = cfg.translateSide;
+  sOllamaTestResult.textContent = '';
+  sOllamaTestResult.className   = 'test-result';
+
   overlay.classList.remove('hidden');
 }
 
@@ -415,14 +507,40 @@ sTest.addEventListener('click', async () => {
 
 sSave.addEventListener('click', () => {
   cfg = {
-    endpoint:      sEndpoint.value.trim()  || defaultCfg().endpoint,
-    model:         sModel.value,
-    chunkInterval: Number(sChunk.value),
-    language:      sLanguage.value.trim(),
-    micLang:       sMicLang.value.trim()   || defaultCfg().micLang,
+    endpoint:           sEndpoint.value.trim()    || defaultCfg().endpoint,
+    model:              sModel.value,
+    chunkInterval:      Number(sChunk.value),
+    language:           sLanguage.value.trim(),
+    micLang:            sMicLang.value.trim()     || defaultCfg().micLang,
+    translationEnabled: sTranslationEnabled.checked,
+    ollamaUrl:          sOllamaUrl.value.trim()   || defaultCfg().ollamaUrl,
+    ollamaModel:        sOllamaModel.value.trim() || defaultCfg().ollamaModel,
+    targetLang:         sTargetLang.value.trim()  || defaultCfg().targetLang,
+    translateSide:      sTranslateSide.value,
   };
   saveCfg(cfg);
   sSaved.textContent = 'Saved!';
   setTimeout(() => { sSaved.textContent = ''; }, 2000);
   checkServer();
+  checkOllama();
+});
+
+sOllamaTest.addEventListener('click', async () => {
+  const url = sEndpoint.value.trim() || cfg.endpoint;
+  sOllamaTestResult.textContent = 'Testing…';
+  sOllamaTestResult.className   = 'test-result';
+  try {
+    const res = await fetch(`${url}/ollama/health`, { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const d = await res.json();
+      sOllamaTestResult.textContent = `✓ Online — model: ${d.active_model}, available: ${(d.models || []).join(', ') || 'none'}`;
+      sOllamaTestResult.classList.add('ok');
+    } else {
+      sOllamaTestResult.textContent = `✗ HTTP ${res.status}`;
+      sOllamaTestResult.classList.add('err');
+    }
+  } catch (err) {
+    sOllamaTestResult.textContent = `✗ ${err.message}`;
+    sOllamaTestResult.classList.add('err');
+  }
 });

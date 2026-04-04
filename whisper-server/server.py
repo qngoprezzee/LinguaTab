@@ -32,12 +32,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from faster_whisper import WhisperModel
+from pydantic import BaseModel
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 SERVER_DIR = Path(__file__).parent
@@ -53,10 +55,12 @@ log = logging.getLogger("livetranscribe")
 
 # ── CLI args ───────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(description="LiveTranscribe local server")
-parser.add_argument("--model",  default="base",      help="Whisper model size (default: base)")
-parser.add_argument("--device", default="auto",       help="cpu | cuda | auto")
-parser.add_argument("--port",   default=5000, type=int)
-parser.add_argument("--host",   default="127.0.0.1")
+parser.add_argument("--model",        default="base",                   help="Whisper model size (default: base)")
+parser.add_argument("--device",       default="auto",                   help="cpu | cuda | auto")
+parser.add_argument("--port",         default=5000, type=int)
+parser.add_argument("--host",         default="127.0.0.1")
+parser.add_argument("--ollama-url",   default="http://localhost:11434", help="Ollama API base URL")
+parser.add_argument("--ollama-model", default="llama3",                 help="Ollama model for translation")
 args, _ = parser.parse_known_args()
 
 # ── Model loading ──────────────────────────────────────────────────────────────
@@ -90,10 +94,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Models ─────────────────────────────────────────────────────────────────────
+class TranslateRequest(BaseModel):
+    text: str
+    target_lang: str
+    source_lang: str = ""
+
 # ── API routes (registered BEFORE static mount so they take priority) ──────────
 @app.get("/health")
 def health():
     return {"status": "ok", "model": args.model}
+
+@app.get("/ollama/health")
+async def ollama_health():
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{args.ollama_url}/api/tags", timeout=3.0)
+            if r.status_code == 200:
+                models = [m["name"] for m in r.json().get("models", [])]
+                return {"status": "ok", "models": models, "active_model": args.ollama_model}
+    except Exception:
+        pass
+    raise HTTPException(503, "Ollama not reachable")
+
+@app.post("/v1/translate")
+async def translate(req: TranslateRequest):
+    if not req.text.strip():
+        return {"translation": ""}
+
+    src = f" from {req.source_lang}" if req.source_lang else ""
+    prompt = (
+        f"Translate the following text{src} to {req.target_lang}. "
+        "Reply with ONLY the translation — no explanations, no quotes.\n\n"
+        f"{req.text}"
+    )
+
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                f"{args.ollama_url}/api/generate",
+                json={"model": args.ollama_model, "prompt": prompt, "stream": False},
+                timeout=30.0,
+            )
+            r.raise_for_status()
+            translation = r.json().get("response", "").strip()
+            log.info(f"Translated ({req.target_lang}): {translation[:80]}")
+            return {"translation": translation}
+    except httpx.TimeoutException:
+        raise HTTPException(504, "Ollama timed out")
+    except Exception as e:
+        log.error(f"Ollama error: {e}")
+        raise HTTPException(502, f"Ollama error: {e}")
 
 @app.post("/v1/audio/transcriptions")
 async def transcribe(

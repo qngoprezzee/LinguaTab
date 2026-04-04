@@ -194,6 +194,17 @@ header {
   animation: pop 0.18s ease;
 }
 .seg .seg-text { color: var(--text); }
+.seg .seg-translation {
+  display: block;
+  font-size: 12px;
+  color: var(--accent);
+  margin-top: 5px;
+  font-style: italic;
+  line-height: 1.5;
+  min-height: 0;
+}
+.seg .seg-translation:empty { display: none; }
+.seg .seg-translation.loading { color: var(--muted); }
 .seg .seg-time { display: block; font-size: 10px; color: var(--muted); margin-top: 4px; }
 
 #col-you     .seg { border-left: 3px solid var(--you); }
@@ -326,3 +337,26 @@ input[type="text"]:focus, select:focus { border-color: var(--accent); }
 .btn-secondary:hover { background: #3a3d4a; }
 
 .save-flash { font-size: 12px; color: var(--you); }
+
+/* ── Toggle checkbox ──────────────────────────────────────────── */
+.toggle-label {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 10px !important;
+  cursor: pointer;
+}
+.toggle-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.toggle-label span {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
