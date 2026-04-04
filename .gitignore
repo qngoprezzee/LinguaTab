@@ -1,0 +1,22 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# macOS
+.DS_Store
+
+# Models (large binary files)
+*.bin
+*.pt
+*.safetensors
+whisper-server/models/
+
+# Environment variables
+.env

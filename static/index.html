@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LiveTranscribe</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header>
+    <div class="header-left">
+      <span class="logo" id="logo"></span>
+      <span class="app-title">LiveTranscribe</span>
+    </div>
+    <div class="header-right">
+      <span id="server-badge" class="badge offline" title="Whisper server status">● Server offline</span>
+      <button id="clear-btn"    class="icon-btn" title="Clear transcript">🗑</button>
+      <button id="copy-btn"     class="icon-btn" title="Copy as text">📋</button>
+      <button id="settings-btn" class="icon-btn" title="Settings">⚙</button>
+    </div>
+  </header>
+
+  <!-- ── Controls ───────────────────────────────────────── -->
+  <div id="controls">
+    <button id="toggle-btn" class="btn-start">Start Recording</button>
+    <div id="status-bar">
+      <span id="mic-pill"  class="pill idle">Mic: idle</span>
+      <span id="tab-pill"  class="pill idle">Partner: idle</span>
+      <span id="timer-el"  class="timer"></span>
+    </div>
+  </div>
+
+  <!-- ── Transcript ─────────────────────────────────────── -->
+  <main id="transcript">
+    <div class="col" id="col-you">
+      <div class="col-head">🎤 You</div>
+      <div class="col-body" id="you-body">
+        <p class="empty-hint">Your speech will appear here.</p>
+      </div>
+      <div class="interim-bar" id="you-interim"></div>
+    </div>
+
+    <div class="col-divider"></div>
+
+    <div class="col" id="col-partner">
+      <div class="col-head">🧑 Partner</div>
+      <div class="col-body" id="partner-body">
+        <p class="empty-hint">Partner speech appears here.<br>
+          <small>Share a tab or window audio when prompted.</small>
+        </p>
+      </div>
+    </div>
+  </main>
+
+  <!-- ── Settings panel ─────────────────────────────────── -->
+  <div id="settings-overlay" class="hidden">
+    <div id="settings-panel">
+      <div class="panel-header">
+        <span>Settings</span>
+        <button id="settings-close" class="icon-btn">✕</button>
+      </div>
+
+      <div class="panel-body">
+        <section class="setting-group">
+          <h3>Local Whisper Server</h3>
+          <label>Server URL
+            <div class="input-row">
+              <input id="s-endpoint" type="text" spellcheck="false"
+                placeholder="http://127.0.0.1:5000">
+              <button id="s-test" class="btn-secondary">Test</button>
+            </div>
+            <span id="s-test-result" class="test-result"></span>
+          </label>
+
+          <label>Model
+            <select id="s-model">
+              <option value="tiny">tiny — fastest, ~75 MB</option>
+              <option value="base" selected>base — recommended, ~145 MB</option>
+              <option value="small">small — better accuracy, ~460 MB</option>
+              <option value="medium">medium — great accuracy, ~1.5 GB</option>
+              <option value="large-v3">large-v3 — best, ~3 GB</option>
+            </select>
+          </label>
+
+          <label>Chunk interval
+            <div class="range-row">
+              <input id="s-chunk" type="range" min="5" max="30" step="5" value="10">
+              <span id="s-chunk-label">10 s</span>
+            </div>
+            <small>How often audio is sent to Whisper. 10 s is recommended.</small>
+          </label>
+
+          <label>Language hint <small>(optional)</small>
+            <input id="s-language" type="text" maxlength="10"
+              placeholder="e.g. en, vi, es — blank = auto-detect">
+          </label>
+        </section>
+
+        <section class="setting-group">
+          <h3>Microphone</h3>
+          <p class="hint">Uses the browser's built-in speech recognition. No server needed.</p>
+          <label>Language
+            <input id="s-mic-lang" type="text" maxlength="10"
+              placeholder="e.g. en-US, vi-VN, es-ES">
+          </label>
+        </section>
+      </div>
+
+      <div class="panel-footer">
+        <button id="s-save" class="btn-primary">Save</button>
+        <span id="s-saved" class="save-flash"></span>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
