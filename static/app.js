@@ -12,7 +12,7 @@ function defaultCfg() {
   return {
     endpoint:           'http://127.0.0.1:5000',
     model:              'base',
-    chunkInterval:      10,
+    chunkInterval:      5,
     language:           '',
     micLang:            'en-US',
     translationEnabled: false,
@@ -156,6 +156,29 @@ function esc(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// Split a block of text into natural sentence-sized pieces.
+// Splits on: . ! ? — and also on commas/conjunctions when a chunk > 120 chars.
+function splitSentences(text) {
+  // First split on strong sentence-ending punctuation
+  const parts = text
+    .split(/(?<=[.!?。？！])\s+/)
+    .flatMap(chunk => {
+      chunk = chunk.trim();
+      if (!chunk) return [];
+      // If still long (> 120 chars), split further on comma/semicolon boundaries
+      if (chunk.length > 120) {
+        return chunk
+          .split(/(?<=[,;،،])\s+/)
+          .map(s => s.trim())
+          .filter(Boolean);
+      }
+      return [chunk];
+    })
+    .filter(Boolean);
+
+  return parts.length ? parts : [text];
+}
+
 function addSegment(bodyEl, segArr, text) {
   const seg = { id: Date.now() + Math.random(), text, translation: '', ts: Date.now() };
   segArr.push(seg);
@@ -173,6 +196,15 @@ function addSegment(bodyEl, segArr, text) {
   bodyEl.appendChild(el);
   bodyEl.scrollTop = bodyEl.scrollHeight;
   return { el, seg };
+}
+
+function addSegments(bodyEl, segArr, text, side) {
+  splitSentences(text).forEach(sentence => {
+    const { el, seg } = addSegment(bodyEl, segArr, sentence);
+    if (cfg.translateSide === 'both' || cfg.translateSide === side) {
+      translateSegment(sentence, el, seg);
+    }
+  });
 }
 
 // ── Translation ──────────────────────────────────────────────────
@@ -243,12 +275,7 @@ async function startMic() {
       const r = event.results[i];
       if (r.isFinal) {
         const text = r[0].transcript.trim();
-        if (text) {
-          const { el, seg } = addSegment(youBody, youSegs, text);
-          if (cfg.translateSide === 'both' || cfg.translateSide === 'you') {
-            translateSegment(text, el, seg);
-          }
-        }
+        if (text) addSegments(youBody, youSegs, text, 'you');
         youInterim.textContent = '';
       } else {
         interim += r[0].transcript;
@@ -380,12 +407,7 @@ async function sendToWhisper(blob) {
     }
     const { text } = await res.json();
     const trimmed  = (text || '').trim();
-    if (trimmed) {
-      const { el, seg } = addSegment(partnerBody, partnerSegs, trimmed);
-      if (cfg.translateSide === 'both' || cfg.translateSide === 'partner') {
-        translateSegment(trimmed, el, seg);
-      }
-    }
+    if (trimmed) addSegments(partnerBody, partnerSegs, trimmed, 'partner');
   } catch (err) {
     console.error('Whisper fetch error:', err);
     setPill(tabPill, 'warn', 'Partner: server offline');
