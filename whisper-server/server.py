@@ -34,9 +34,9 @@ from typing import Optional
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from faster_whisper import WhisperModel
 from pydantic import BaseModel
@@ -93,6 +93,20 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Chrome Private Network Access — required for fetch() to 127.0.0.1 from Chrome 98+
+@app.middleware("http")
+async def private_network_access(request: Request, call_next):
+    if request.method == "OPTIONS":
+        response = Response(status_code=204)
+        response.headers["Access-Control-Allow-Origin"]          = "*"
+        response.headers["Access-Control-Allow-Methods"]         = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"]         = "*"
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+        return response
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
 
 # ── Models ─────────────────────────────────────────────────────────────────────
 class TranslateRequest(BaseModel):
