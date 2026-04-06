@@ -157,7 +157,7 @@ function esc(s) {
 }
 
 function addSegment(bodyEl, segArr, text) {
-  const seg = { id: Date.now() + Math.random(), text, ts: Date.now() };
+  const seg = { id: Date.now() + Math.random(), text, translation: '', ts: Date.now() };
   segArr.push(seg);
 
   // Remove placeholder
@@ -172,11 +172,11 @@ function addSegment(bodyEl, segArr, text) {
     + `<span class="seg-time">${t}</span>`;
   bodyEl.appendChild(el);
   bodyEl.scrollTop = bodyEl.scrollHeight;
-  return el;
+  return { el, seg };
 }
 
 // ── Translation ──────────────────────────────────────────────────
-async function translateSegment(text, segEl) {
+async function translateSegment(text, segEl, seg) {
   if (!cfg.translationEnabled || !text) return;
   const translEl = segEl.querySelector('.seg-translation');
   if (!translEl) return;
@@ -199,6 +199,7 @@ async function translateSegment(text, segEl) {
       const { translation } = await res.json();
       translEl.textContent = translation || '';
       translEl.classList.remove('error');
+      if (seg) seg.translation = translation || '';
     } else {
       const body = await res.json().catch(() => ({}));
       translEl.textContent = `⚠ ${body.detail || res.status}`;
@@ -243,9 +244,9 @@ async function startMic() {
       if (r.isFinal) {
         const text = r[0].transcript.trim();
         if (text) {
-          const el = addSegment(youBody, youSegs, text);
+          const { el, seg } = addSegment(youBody, youSegs, text);
           if (cfg.translateSide === 'both' || cfg.translateSide === 'you') {
-            translateSegment(text, el);
+            translateSegment(text, el, seg);
           }
         }
         youInterim.textContent = '';
@@ -380,9 +381,9 @@ async function sendToWhisper(blob) {
     const { text } = await res.json();
     const trimmed  = (text || '').trim();
     if (trimmed) {
-      const el = addSegment(partnerBody, partnerSegs, trimmed);
+      const { el, seg } = addSegment(partnerBody, partnerSegs, trimmed);
       if (cfg.translateSide === 'both' || cfg.translateSide === 'partner') {
-        translateSegment(trimmed, el);
+        translateSegment(trimmed, el, seg);
       }
     }
   } catch (err) {
@@ -426,6 +427,7 @@ function stopSession() {
   stopMic();
   stopPartner();
   stopTimer();
+  saveCurrentSession();
 
   logo.classList.remove('recording');
   toggleBtn.textContent = 'Start Recording';
@@ -437,6 +439,125 @@ toggleBtn.addEventListener('click', () => {
   if (isRecording) stopSession();
   else             startSession();
 });
+
+// ── Session history (localStorage) ──────────────────────────────
+const HISTORY_KEY = 'livetranscribe_history';
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); }
+  catch { return []; }
+}
+
+function saveHistory(sessions) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(sessions));
+}
+
+function saveCurrentSession() {
+  if (!youSegs.length && !partnerSegs.length) return;
+  const sessions = loadHistory();
+  sessions.unshift({
+    id:        Date.now(),
+    savedAt:   Date.now(),
+    you:       youSegs.map(s => ({ text: s.text, translation: s.translation, ts: s.ts })),
+    partner:   partnerSegs.map(s => ({ text: s.text, translation: s.translation, ts: s.ts })),
+  });
+  // Keep last 50 sessions
+  saveHistory(sessions.slice(0, 50));
+}
+
+function deleteSession(id) {
+  const sessions = loadHistory().filter(s => s.id !== id);
+  saveHistory(sessions);
+  renderHistoryPanel();
+}
+
+function renderHistoryPanel() {
+  const sessions = loadHistory();
+  const list = document.getElementById('history-list');
+  if (!sessions.length) {
+    list.innerHTML = '<p class="empty-hint">No saved sessions yet.</p>';
+    return;
+  }
+  list.innerHTML = sessions.map(s => {
+    const date  = new Date(s.savedAt).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    const total = s.you.length + s.partner.length;
+    const preview = [...s.you, ...s.partner]
+      .sort((a, b) => a.ts - b.ts)
+      .slice(0, 2)
+      .map(seg => esc(seg.text.slice(0, 60)))
+      .join(' · ');
+    return `<div class="hist-item" data-id="${s.id}">
+      <div class="hist-meta">
+        <span class="hist-date">${date}</span>
+        <span class="hist-count">${total} segment${total !== 1 ? 's' : ''}</span>
+        <button class="hist-delete icon-btn" data-id="${s.id}" title="Delete">🗑</button>
+      </div>
+      <div class="hist-preview">${preview || '(empty)'}</div>
+      <button class="hist-load btn-secondary" data-id="${s.id}">Load</button>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.hist-delete').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      deleteSession(Number(btn.dataset.id));
+    });
+  });
+
+  list.querySelectorAll('.hist-load').forEach(btn => {
+    btn.addEventListener('click', () => loadSession(Number(btn.dataset.id)));
+  });
+}
+
+function loadSession(id) {
+  const session = loadHistory().find(s => s.id === id);
+  if (!session) return;
+
+  // Clear current
+  youSegs.length = partnerSegs.length = 0;
+  youBody.innerHTML     = '';
+  partnerBody.innerHTML = '';
+  youInterim.textContent = '';
+
+  // Replay you segments
+  session.you.forEach(s => {
+    youSegs.push({ ...s, id: s.ts + Math.random() });
+    const d  = new Date(s.ts);
+    const t  = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const el = document.createElement('div');
+    el.className = 'seg';
+    el.innerHTML = `<span class="seg-text">${esc(s.text)}</span>`
+      + (s.translation ? `<span class="seg-translation">${esc(s.translation)}</span>` : `<span class="seg-translation"></span>`)
+      + `<span class="seg-time">${t}</span>`;
+    youBody.appendChild(el);
+  });
+
+  // Replay partner segments
+  session.partner.forEach(s => {
+    partnerSegs.push({ ...s, id: s.ts + Math.random() });
+    const d  = new Date(s.ts);
+    const t  = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const el = document.createElement('div');
+    el.className = 'seg';
+    el.innerHTML = `<span class="seg-text">${esc(s.text)}</span>`
+      + (s.translation ? `<span class="seg-translation">${esc(s.translation)}</span>` : `<span class="seg-translation"></span>`)
+      + `<span class="seg-time">${t}</span>`;
+    partnerBody.appendChild(el);
+  });
+
+  if (!youSegs.length)     youBody.innerHTML     = '<p class="empty-hint">Your speech will appear here.</p>';
+  if (!partnerSegs.length) partnerBody.innerHTML = '<p class="empty-hint">Partner speech appears here.<br><small>Share a tab or window audio when prompted.</small></p>';
+
+  closeHistory();
+}
+
+function openHistory() {
+  renderHistoryPanel();
+  document.getElementById('history-overlay').classList.remove('hidden');
+}
+function closeHistory() {
+  document.getElementById('history-overlay').classList.add('hidden');
+}
 
 // ── Clear / Copy ─────────────────────────────────────────────────
 clearBtn.addEventListener('click', () => {
@@ -532,6 +653,19 @@ sSave.addEventListener('click', () => {
   setTimeout(() => { sSaved.textContent = ''; }, 2000);
   checkServer();
   checkOllama();
+});
+
+// ── History panel events ─────────────────────────────────────────
+document.getElementById('history-btn').addEventListener('click', openHistory);
+document.getElementById('history-close').addEventListener('click', closeHistory);
+document.getElementById('history-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('history-overlay')) closeHistory();
+});
+document.getElementById('history-clear-all').addEventListener('click', () => {
+  if (confirm('Delete all saved sessions?')) {
+    saveHistory([]);
+    renderHistoryPanel();
+  }
 });
 
 sOllamaTest.addEventListener('click', async () => {

@@ -339,6 +339,75 @@ input[type="text"]:focus, select:focus { border-color: var(--accent); }
 
 .save-flash { font-size: 12px; color: var(--you); }
 
+/* ── History panel ───────────────────────────────────────────── */
+#history-overlay {
+  position: fixed;
+  inset: 0;
+  background: #00000080;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  z-index: 100;
+  backdrop-filter: blur(4px);
+}
+#history-overlay.hidden { display: none; }
+
+#history-panel {
+  width: 420px;
+  height: 100%;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#history-list {
+  gap: 12px;
+}
+
+.hist-item {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hist-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hist-date  { font-size: 12px; font-weight: 700; color: var(--text); flex: 1; }
+.hist-count { font-size: 11px; color: var(--muted); }
+
+.hist-delete {
+  font-size: 13px;
+  padding: 2px 6px;
+  color: var(--muted);
+}
+.hist-delete:hover { color: var(--error); }
+
+.hist-preview {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hist-load {
+  align-self: flex-start;
+  font-size: 11px;
+  padding: 4px 12px;
+  margin-top: 2px;
+}
+
 /* ── Toggle checkbox ──────────────────────────────────────────── */
 .toggle-label {
   display: flex !important;
