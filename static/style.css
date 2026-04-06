@@ -205,6 +205,7 @@ header {
 }
 .seg .seg-translation:empty { display: none; }
 .seg .seg-translation.loading { color: var(--muted); }
+.seg .seg-translation.error   { color: var(--error); font-style: normal; font-size: 11px; }
 .seg .seg-time { display: block; font-size: 10px; color: var(--muted); margin-top: 4px; }
 
 #col-you     .seg { border-left: 3px solid var(--you); }

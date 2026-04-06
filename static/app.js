@@ -188,16 +188,25 @@ async function translateSegment(text, segEl) {
     const res = await fetch(`${cfg.endpoint}/v1/translate`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ text, target_lang: cfg.targetLang }),
+      body:    JSON.stringify({
+        text,
+        target_lang: cfg.targetLang,
+        model:       cfg.ollamaModel,
+        ollama_url:  cfg.ollamaUrl,
+      }),
     });
     if (res.ok) {
       const { translation } = await res.json();
       translEl.textContent = translation || '';
+      translEl.classList.remove('error');
     } else {
-      translEl.textContent = '';
+      const body = await res.json().catch(() => ({}));
+      translEl.textContent = `⚠ ${body.detail || res.status}`;
+      translEl.classList.add('error');
     }
-  } catch {
-    translEl.textContent = '';
+  } catch (err) {
+    translEl.textContent = `⚠ ${err.message}`;
+    translEl.classList.add('error');
   }
   translEl.classList.remove('loading');
 }

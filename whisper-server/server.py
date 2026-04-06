@@ -99,6 +99,8 @@ class TranslateRequest(BaseModel):
     text: str
     target_lang: str
     source_lang: str = ""
+    model: str = ""         # overrides --ollama-model if provided
+    ollama_url: str = ""    # overrides --ollama-url if provided
 
 # ── API routes (registered BEFORE static mount so they take priority) ──────────
 @app.get("/health")
@@ -122,6 +124,10 @@ async def translate(req: TranslateRequest):
     if not req.text.strip():
         return {"translation": ""}
 
+    ollama_url   = req.ollama_url.rstrip("/") or args.ollama_url
+    ollama_model = req.model or args.ollama_model
+    log.info(f"Translating to '{req.target_lang}' via {ollama_model} ...")
+
     src = f" from {req.source_lang}" if req.source_lang else ""
     prompt = (
         f"Translate the following text{src} to {req.target_lang}. "
@@ -132,8 +138,8 @@ async def translate(req: TranslateRequest):
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(
-                f"{args.ollama_url}/api/generate",
-                json={"model": args.ollama_model, "prompt": prompt, "stream": False},
+                f"{ollama_url}/api/generate",
+                json={"model": ollama_model, "prompt": prompt, "stream": False},
                 timeout=30.0,
             )
             r.raise_for_status()
