@@ -267,19 +267,26 @@ async function translateSegment(text, segEl, seg) {
 }
 
 // ── Interim translation (debounced) ─────────────────────────────
-let _interimDebounce = null;
-let _interimAbort    = null;
+let _interimDebounce  = null;
+let _interimAbort     = null;
+let _lastInterimWords = 0;   // word count when we last fired a translation
 
 function translateInterim(text) {
   if (!cfg.translationEnabled || !text ||
       (cfg.translateSide !== 'both' && cfg.translateSide !== 'you')) return;
 
+  const wordCount = text.trim().split(/\s+/).length;
+
+  // Skip if no new word has been added since the last request
+  if (wordCount <= _lastInterimWords) return;
+
   clearTimeout(_interimDebounce);
   _interimDebounce = setTimeout(async () => {
     if (_interimAbort) _interimAbort.abort();
     _interimAbort = new AbortController();
+    _lastInterimWords = wordCount;
 
-    youInterimTranslation.textContent = '…';
+    // Don't blank the display — keep previous translation visible until first token arrives
     try {
       const res = await fetch(`${cfg.endpoint}/v1/translate/stream`, {
         method:  'POST',
@@ -297,16 +304,23 @@ function translateInterim(text) {
       const reader  = res.body.getReader();
       const decoder = new TextDecoder();
       let out = '';
+      let firstToken = true;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        out += decoder.decode(value, { stream: true });
+        const chunk = decoder.decode(value, { stream: true });
+        if (firstToken) {
+          // Only replace previous translation when new one actually starts arriving
+          youInterimTranslation.textContent = '';
+          firstToken = false;
+        }
+        out += chunk;
         youInterimTranslation.textContent = out;
       }
     } catch (e) {
       if (e.name !== 'AbortError') youInterimTranslation.textContent = '';
     }
-  }, 600);
+  }, 150);
 }
 
 // ── Mic pipeline — Web Speech API ────────────────────────────────
@@ -342,6 +356,7 @@ async function startMic() {
         const text = r[0].transcript.trim();
         clearTimeout(_interimDebounce);
         if (_interimAbort) { _interimAbort.abort(); _interimAbort = null; }
+        _lastInterimWords = 0;
         youInterimTranslation.textContent = '';
         if (text) addSegments(youBody, youSegs, text, 'you');
         youInterim.textContent = '';
@@ -376,6 +391,7 @@ function stopMic() {
   if (micStream)      { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
   clearTimeout(_interimDebounce);
   if (_interimAbort) { _interimAbort.abort(); _interimAbort = null; }
+  _lastInterimWords = 0;
   youInterim.textContent = '';
   youInterimTranslation.textContent = '';
   setPill(micPill, 'idle', 'Mic: idle');
