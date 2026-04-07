@@ -28,6 +28,7 @@ import argparse
 import io
 import json
 import logging
+import re
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -41,6 +42,27 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from faster_whisper import WhisperModel
 from pydantic import BaseModel
+
+# ── CJK hallucination filter ──────────────────────────────────────────────────
+# Languages that legitimately produce CJK characters
+_CJK_LANGS = {'zh', 'ja', 'ko', 'yue', 'zh-TW', 'zh-CN'}
+# Matches any CJK ideograph / kana / fullwidth block
+_CJK_RE = re.compile(
+    r'[\u3000-\u303f'   # CJK symbols & punctuation
+    r'\u3040-\u309f'    # Hiragana
+    r'\u30a0-\u30ff'    # Katakana
+    r'\u4e00-\u9fff'    # CJK Unified Ideographs (core)
+    r'\u3400-\u4dbf'    # CJK Extension A
+    r'\uf900-\ufaff'    # CJK Compatibility Ideographs
+    r'\uff00-\uffef]'   # Halfwidth/fullwidth forms
+)
+
+def _has_cjk(text: str) -> bool:
+    return bool(_CJK_RE.search(text))
+
+def _strip_cjk(text: str) -> str:
+    """Remove CJK characters and collapse extra whitespace."""
+    return re.sub(r'\s{2,}', ' ', _CJK_RE.sub('', text)).strip()
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 SERVER_DIR = Path(__file__).parent
@@ -238,7 +260,15 @@ async def transcribe(
         vad_parameters={"min_silence_duration_ms": 300},
     )
 
-    text = " ".join(seg.text.strip() for seg in segments).strip()
+    parts = []
+    filter_cjk = info.language not in _CJK_LANGS
+    for seg in segments:
+        t = seg.text.strip()
+        if filter_cjk and _has_cjk(t):
+            t = _strip_cjk(t)
+        if t:
+            parts.append(t)
+    text = " ".join(parts)
     log.info(f"Result ({info.language}, {info.duration:.1f}s): {text[:120]}")
 
     return {"text": text}
@@ -277,6 +307,9 @@ async def transcribe_stream(
             word_timestamps=True,
             condition_on_previous_text=True,
         )
+        # Filter CJK hallucinations when the detected language is not CJK
+        filter_cjk = info.language not in _CJK_LANGS
+
         word_buf = []
         all_text = []
         for seg in segments:
@@ -284,6 +317,8 @@ async def transcribe_stream(
             if not words:
                 # no word timestamps — fall back to segment text
                 text = seg.text.strip()
+                if filter_cjk and _has_cjk(text):
+                    text = _strip_cjk(text)
                 if text:
                     all_text.append(text)
                     yield text + '\n'
@@ -291,6 +326,9 @@ async def transcribe_stream(
             for w in words:
                 token = w.word.strip()
                 if not token:
+                    continue
+                # Drop CJK tokens entirely when they are hallucinations
+                if filter_cjk and _has_cjk(token):
                     continue
                 word_buf.append(token)
                 all_text.append(token)
