@@ -355,7 +355,7 @@ async def transcribe_stream(
     log.info(f"Stream-transcribing  {len(audio_bytes)/1024:.1f} KB  lang={language or 'auto'}")
 
     SENTENCE_END = frozenset('.!?。？！…')
-    MAX_WORDS    = 12    # yield after this many words even without punctuation
+    MAX_WORDS    = 6     # yield after this many words even without punctuation
 
     def segment_generator():
         segments, info = _model.transcribe(

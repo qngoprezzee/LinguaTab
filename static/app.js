@@ -12,7 +12,7 @@ function defaultCfg() {
   return {
     endpoint:           'http://127.0.0.1:5000',
     model:              'base',
-    chunkInterval:      5,
+    chunkInterval:      3,
     language:           '',
     micLang:            'en-US',
     translationEnabled: false,
@@ -442,8 +442,8 @@ function startPartnerRecorder() {
 
   // ── Silence detection via Web Audio ────────────────────────────
   const SILENCE_THRESHOLD = 8;    // RMS 0-100; below = silence
-  const SILENCE_DELAY_MS  = 500;  // ms of silence before flushing
-  const MIN_CHUNK_MS      = 1000; // never flush shorter than this
+  const SILENCE_DELAY_MS  = 250;  // ms of silence before flushing
+  const MIN_CHUNK_MS      = 400;  // never flush shorter than this
 
   partnerAudioCtx       = new AudioContext();
   const source          = partnerAudioCtx.createMediaStreamSource(partnerStream);
