@@ -295,12 +295,20 @@ async function startMic() {
     }
   };
 
+  let micBlocked = false;
+
   micRecognition.onerror = e => {
     if (e.error === 'no-speech' || e.error === 'aborted') return;
+    if (e.error === 'not-allowed') {
+      micBlocked = true;
+      setPill(micPill, 'error', 'Mic: blocked — allow mic for localhost in browser settings');
+      return;
+    }
     setPill(micPill, 'error', `Mic: ${e.error}`);
   };
 
   micRecognition.onend = () => {
+    if (micBlocked) return;           // don't restart if permission was denied
     if (isRecording) {
       try { micRecognition.start(); } catch (_) {}
     } else {
