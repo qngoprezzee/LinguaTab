@@ -72,9 +72,10 @@ let timerInterval  = null;
 let micStream      = null;
 let micRecognition = null;
 
-let partnerStream  = null;
+let partnerStream   = null;
 let partnerRecorder = null;
-let partnerTimer   = null;
+let partnerTimer    = null;
+let partnerAudioCtx = null;
 
 const youSegs     = [];   // { id, text, ts }
 const partnerSegs = [];
@@ -432,23 +433,71 @@ function startPartnerRecorder() {
   const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
     ? 'audio/webm;codecs=opus' : 'audio/webm';
 
+  // ── Silence detection via Web Audio ────────────────────────────
+  const SILENCE_THRESHOLD = 8;    // RMS 0-100; below = silence
+  const SILENCE_DELAY_MS  = 500;  // ms of silence before flushing
+  const MIN_CHUNK_MS      = 1000; // never flush shorter than this
+
+  partnerAudioCtx       = new AudioContext();
+  const source          = partnerAudioCtx.createMediaStreamSource(partnerStream);
+  const analyser        = partnerAudioCtx.createAnalyser();
+  analyser.fftSize      = 512;
+  source.connect(analyser);
+  const pcm             = new Uint8Array(analyser.frequencyBinCount);
+
+  function getRMS() {
+    analyser.getByteTimeDomainData(pcm);
+    let sum = 0;
+    for (let i = 0; i < pcm.length; i++) { const v = (pcm[i] - 128) / 128; sum += v * v; }
+    return Math.sqrt(sum / pcm.length) * 100;
+  }
+
+  let silenceAt  = null;
+  let chunkStart = Date.now();
+
+  function pollSilence() {
+    if (!isRecording) return;
+    const now     = Date.now();
+    const elapsed = now - chunkStart;
+
+    if (getRMS() < SILENCE_THRESHOLD) {
+      if (silenceAt === null) silenceAt = now;
+      if (now - silenceAt >= SILENCE_DELAY_MS && elapsed >= MIN_CHUNK_MS) {
+        // Pause detected — flush chunk early
+        silenceAt = null;
+        if (partnerRecorder?.state === 'recording') {
+          clearTimeout(partnerTimer);
+          partnerTimer = null;
+          partnerRecorder.stop();  // onstop restarts the recorder
+          return;                  // resume polling after new recorder starts
+        }
+      }
+    } else {
+      silenceAt = null;
+    }
+    setTimeout(pollSilence, 50);
+  }
+
+  // ── Recorder lifecycle ──────────────────────────────────────────
   function createRecorder() {
     const chunks = [];
     const rec    = new MediaRecorder(partnerStream, { mimeType });
+    chunkStart   = Date.now();
 
     rec.ondataavailable = e => { if (e.data?.size > 0) chunks.push(e.data); };
 
     rec.onstop = async () => {
       if (!chunks.length || !isRecording) return;
       const blob = new Blob(chunks, { type: mimeType });
-      await sendToWhisper(blob);
-      // Restart next window
+      sendToWhisper(blob);           // fire-and-forget; don't block next chunk
       if (isRecording && partnerStream?.active) {
         partnerRecorder = createRecorder();
+        setTimeout(pollSilence, 50); // resume silence polling for new chunk
       }
     };
 
     rec.start();
+    // Hard cap: flush after chunkInterval regardless of silence
     partnerTimer = setTimeout(() => {
       if (rec.state === 'recording') rec.stop();
     }, cfg.chunkInterval * 1000);
@@ -457,6 +506,7 @@ function startPartnerRecorder() {
   }
 
   partnerRecorder = createRecorder();
+  pollSilence();
 }
 
 async function sendToWhisper(blob) {
@@ -502,9 +552,10 @@ async function sendToWhisper(blob) {
 }
 
 function stopPartner() {
-  if (partnerTimer) { clearTimeout(partnerTimer); partnerTimer = null; }
+  if (partnerTimer)    { clearTimeout(partnerTimer); partnerTimer = null; }
   if (partnerRecorder?.state === 'recording') { partnerRecorder.stop(); partnerRecorder = null; }
-  if (partnerStream) { partnerStream.getTracks().forEach(t => t.stop()); partnerStream = null; }
+  if (partnerStream)   { partnerStream.getTracks().forEach(t => t.stop()); partnerStream = null; }
+  if (partnerAudioCtx) { partnerAudioCtx.close(); partnerAudioCtx = null; }
   setPill(tabPill, 'idle', 'Partner: idle');
 }
 
