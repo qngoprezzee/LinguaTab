@@ -264,7 +264,7 @@ async def transcribe_stream(
     log.info(f"Stream-transcribing  {len(audio_bytes)/1024:.1f} KB  lang={language or 'auto'}")
 
     SENTENCE_END = frozenset('.!?。？！…')
-    MAX_BUFFER   = 120   # flush mid-sentence if buffer grows beyond this many chars
+    MAX_WORDS    = 12    # yield after this many words even without punctuation
 
     def segment_generator():
         segments, info = _model.transcribe(
@@ -274,24 +274,33 @@ async def transcribe_stream(
             beam_size=5,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 300},
-            max_new_tokens=60,          # keep individual whisper segments short
+            word_timestamps=True,
             condition_on_previous_text=True,
         )
-        buf = ''
-        full = []
+        word_buf = []
+        all_text = []
         for seg in segments:
-            text = seg.text.strip()
-            if not text:
+            words = seg.words or []
+            if not words:
+                # no word timestamps — fall back to segment text
+                text = seg.text.strip()
+                if text:
+                    all_text.append(text)
+                    yield text + '\n'
                 continue
-            full.append(text)
-            buf = (buf + ' ' + text).strip()
-            # Yield whenever we reach a sentence boundary or the buffer is long
-            if buf[-1] in SENTENCE_END or len(buf) >= MAX_BUFFER:
-                yield buf + '\n'
-                buf = ''
-        if buf:                         # flush any trailing fragment
-            yield buf + '\n'
-        log.info(f"Stream done ({info.language}, {info.duration:.1f}s): {' '.join(full)[:120]}")
+            for w in words:
+                token = w.word.strip()
+                if not token:
+                    continue
+                word_buf.append(token)
+                all_text.append(token)
+                last_char = token[-1]
+                if last_char in SENTENCE_END or len(word_buf) >= MAX_WORDS:
+                    yield ' '.join(word_buf) + '\n'
+                    word_buf = []
+        if word_buf:
+            yield ' '.join(word_buf) + '\n'
+        log.info(f"Stream done ({info.language}, {info.duration:.1f}s): {' '.join(all_text)[:120]}")
 
     return StreamingResponse(segment_generator(), media_type="text/plain")
 
