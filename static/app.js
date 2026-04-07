@@ -34,7 +34,8 @@ const tabPill       = document.getElementById('tab-pill');
 const timerEl       = document.getElementById('timer-el');
 const youBody       = document.getElementById('you-body');
 const partnerBody   = document.getElementById('partner-body');
-const youInterim    = document.getElementById('you-interim');
+const youInterim            = document.getElementById('you-interim');
+const youInterimTranslation = document.getElementById('you-interim-translation');
 const clearBtn      = document.getElementById('clear-btn');
 const copyBtn       = document.getElementById('copy-btn');
 const settingsBtn   = document.getElementById('settings-btn');
@@ -213,35 +214,95 @@ async function translateSegment(text, segEl, seg) {
   const translEl = segEl.querySelector('.seg-translation');
   if (!translEl) return;
 
-  translEl.textContent = 'Translating…';
+  translEl.textContent = '';
   translEl.classList.add('loading');
+  translEl.classList.remove('error');
+
+  const body = JSON.stringify({
+    text,
+    target_lang: cfg.targetLang,
+    model:       cfg.ollamaModel,
+    ollama_url:  cfg.ollamaUrl,
+  });
 
   try {
-    const res = await fetch(`${cfg.endpoint}/v1/translate`, {
+    const res = await fetch(`${cfg.endpoint}/v1/translate/stream`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({
-        text,
-        target_lang: cfg.targetLang,
-        model:       cfg.ollamaModel,
-        ollama_url:  cfg.ollamaUrl,
-      }),
+      body,
     });
-    if (res.ok) {
-      const { translation } = await res.json();
-      translEl.textContent = translation || '';
-      translEl.classList.remove('error');
-      if (seg) seg.translation = translation || '';
-    } else {
-      const body = await res.json().catch(() => ({}));
-      translEl.textContent = `⚠ ${body.detail || res.status}`;
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      translEl.textContent = `⚠ ${err.detail || res.status}`;
       translEl.classList.add('error');
+      translEl.classList.remove('loading');
+      return;
     }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let translation = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      translation += decoder.decode(value, { stream: true });
+      translEl.textContent = translation;
+      // keep column scrolled to bottom as tokens arrive
+      const col = segEl.closest('.col-body');
+      if (col) col.scrollTop = col.scrollHeight;
+    }
+
+    if (seg) seg.translation = translation.trim();
   } catch (err) {
     translEl.textContent = `⚠ ${err.message}`;
     translEl.classList.add('error');
   }
   translEl.classList.remove('loading');
+}
+
+// ── Interim translation (debounced) ─────────────────────────────
+let _interimDebounce = null;
+let _interimAbort    = null;
+
+function translateInterim(text) {
+  if (!cfg.translationEnabled || !text ||
+      (cfg.translateSide !== 'both' && cfg.translateSide !== 'you')) return;
+
+  clearTimeout(_interimDebounce);
+  _interimDebounce = setTimeout(async () => {
+    if (_interimAbort) _interimAbort.abort();
+    _interimAbort = new AbortController();
+
+    youInterimTranslation.textContent = '…';
+    try {
+      const res = await fetch(`${cfg.endpoint}/v1/translate/stream`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          text,
+          target_lang: cfg.targetLang,
+          model:       cfg.ollamaModel,
+          ollama_url:  cfg.ollamaUrl,
+        }),
+        signal: _interimAbort.signal,
+      });
+      if (!res.ok) { youInterimTranslation.textContent = ''; return; }
+
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let out = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        out += decoder.decode(value, { stream: true });
+        youInterimTranslation.textContent = out;
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') youInterimTranslation.textContent = '';
+    }
+  }, 600);
 }
 
 // ── Mic pipeline — Web Speech API ────────────────────────────────
@@ -275,13 +336,19 @@ async function startMic() {
       const r = event.results[i];
       if (r.isFinal) {
         const text = r[0].transcript.trim();
+        clearTimeout(_interimDebounce);
+        if (_interimAbort) { _interimAbort.abort(); _interimAbort = null; }
+        youInterimTranslation.textContent = '';
         if (text) addSegments(youBody, youSegs, text, 'you');
         youInterim.textContent = '';
       } else {
         interim += r[0].transcript;
       }
     }
-    if (interim) youInterim.textContent = interim;
+    if (interim) {
+      youInterim.textContent = interim;
+      translateInterim(interim);
+    }
   };
 
   micRecognition.onerror = e => {
@@ -303,7 +370,10 @@ async function startMic() {
 function stopMic() {
   if (micRecognition) { try { micRecognition.stop(); } catch (_) {} micRecognition = null; }
   if (micStream)      { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  clearTimeout(_interimDebounce);
+  if (_interimAbort) { _interimAbort.abort(); _interimAbort = null; }
   youInterim.textContent = '';
+  youInterimTranslation.textContent = '';
   setPill(micPill, 'idle', 'Mic: idle');
 }
 

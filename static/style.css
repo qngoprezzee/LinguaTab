@@ -226,6 +226,13 @@ header {
   background: var(--bg);
   flex-shrink: 0;
 }
+.interim-bar.interim-translation {
+  color: var(--accent);
+  border-top: none;
+  padding-top: 0;
+  min-height: 0;
+}
+.interim-bar.interim-translation:empty { display: none; }
 
 .col-divider {
   width: 1px;

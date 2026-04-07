@@ -26,6 +26,7 @@ Available models (downloaded automatically to ~/.cache/huggingface/):
 
 import argparse
 import io
+import json
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -36,7 +37,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from faster_whisper import WhisperModel
 from pydantic import BaseModel
@@ -133,6 +134,19 @@ async def ollama_health():
         pass
     raise HTTPException(503, "Ollama not reachable")
 
+def _build_prompt(req: TranslateRequest) -> str:
+    src = f" from {req.source_lang}" if req.source_lang else ""
+    return (
+        f"You are a professional translator. Translate the text below{src} into {req.target_lang}.\n"
+        f"Rules:\n"
+        f"- Output ONLY the {req.target_lang} translation, nothing else.\n"
+        f"- Do NOT use any other language or script in your response.\n"
+        f"- Do NOT add explanations, notes, or punctuation that wasn't in the original.\n"
+        f"- If a word has no direct translation, use the closest natural equivalent in {req.target_lang}.\n\n"
+        f"Text:\n{req.text}\n\n"
+        f"Translation in {req.target_lang}:"
+    )
+
 @app.post("/v1/translate")
 async def translate(req: TranslateRequest):
     if not req.text.strip():
@@ -142,12 +156,7 @@ async def translate(req: TranslateRequest):
     ollama_model = req.model or args.ollama_model
     log.info(f"Translating to '{req.target_lang}' via {ollama_model} ...")
 
-    src = f" from {req.source_lang}" if req.source_lang else ""
-    prompt = (
-        f"Translate the following text{src} to {req.target_lang}. "
-        "Reply with ONLY the translation — no explanations, no quotes.\n\n"
-        f"{req.text}"
-    )
+    prompt = _build_prompt(req)
 
     try:
         async with httpx.AsyncClient() as client:
@@ -165,6 +174,44 @@ async def translate(req: TranslateRequest):
     except Exception as e:
         log.error(f"Ollama error: {e}")
         raise HTTPException(502, f"Ollama error: {e}")
+
+@app.post("/v1/translate/stream")
+async def translate_stream(req: TranslateRequest):
+    """Stream translation tokens as plain text chunks — first token arrives ~300ms."""
+    if not req.text.strip():
+        return Response("", media_type="text/plain")
+
+    ollama_url   = req.ollama_url.rstrip("/") or args.ollama_url
+    ollama_model = req.model or args.ollama_model
+    log.info(f"Streaming translation to '{req.target_lang}' via {ollama_model} ...")
+
+    prompt = _build_prompt(req)
+
+    async def token_generator():
+        try:
+            async with httpx.AsyncClient() as client:
+                async with client.stream(
+                    "POST",
+                    f"{ollama_url}/api/generate",
+                    json={"model": ollama_model, "prompt": prompt, "stream": True},
+                    timeout=30.0,
+                ) as r:
+                    async for line in r.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                        except Exception:
+                            continue
+                        token = data.get("response", "")
+                        if token:
+                            yield token
+                        if data.get("done"):
+                            break
+        except Exception as e:
+            log.error(f"Ollama stream error: {e}")
+
+    return StreamingResponse(token_generator(), media_type="text/plain")
 
 @app.post("/v1/audio/transcriptions")
 async def transcribe(
