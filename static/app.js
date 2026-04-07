@@ -330,7 +330,12 @@ async function startMic() {
   try {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
   } catch (err) {
-    setPill(micPill, 'error', 'Mic: blocked');
+    const msg = err.name === 'NotAllowedError'  ? 'Mic: permission denied' :
+                err.name === 'NotFoundError'    ? 'Mic: not found' :
+                err.name === 'NotReadableError' ? 'Mic: in use by another app' :
+                err.name === 'SecurityError'    ? 'Mic: needs http://localhost' :
+                                                  `Mic: ${err.name}`;
+    setPill(micPill, 'error', msg);
     console.error('Mic getUserMedia failed:', err);
     return;
   }
