@@ -10,7 +10,7 @@ function loadCfg() {
 function saveCfg(c) { localStorage.setItem(CFG_KEY, JSON.stringify(c)); }
 function defaultCfg() {
   return {
-    endpoint:           'http://127.0.0.1:5000',
+    endpoint:           'http://localhost:5000',
     model:              'base',
     chunkInterval:      3,
     splitWords:         8,
