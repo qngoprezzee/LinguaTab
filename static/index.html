@@ -27,34 +27,20 @@
   <div id="controls">
     <button id="toggle-btn" class="btn-start">Start Recording</button>
     <div id="status-bar">
-      <span id="mic-pill"  class="pill idle">Mic: idle</span>
-      <span id="tab-pill"  class="pill idle">Partner: idle</span>
-      <span id="timer-el"  class="timer"></span>
+      <span id="mic-pill" class="pill idle">Mic: idle</span>
+      <span id="timer-el" class="timer"></span>
     </div>
   </div>
 
   <!-- ── Transcript ─────────────────────────────────────── -->
   <main id="transcript">
     <div class="col" id="col-you">
-      <div class="col-head">🎤 You</div>
+      <div class="col-head">🎤 Speech</div>
       <div class="col-body" id="you-body">
         <p class="empty-hint">Your speech will appear here.</p>
       </div>
       <div class="interim-bar" id="you-interim"></div>
       <div class="interim-bar interim-translation" id="you-interim-translation"></div>
-    </div>
-
-    <div class="col-divider"></div>
-
-    <div class="col" id="col-partner">
-      <div class="col-head">🧑 Partner</div>
-      <div class="col-body" id="partner-body">
-        <p class="empty-hint">Partner speech appears here.<br>
-          <small>Share a tab or window audio when prompted.</small>
-        </p>
-      </div>
-      <div class="interim-bar" id="partner-interim"></div>
-      <div class="interim-bar interim-translation" id="partner-interim-translation"></div>
     </div>
   </main>
 
@@ -72,7 +58,7 @@
           <label>Server URL
             <div class="input-row">
               <input id="s-endpoint" type="text" spellcheck="false"
-                placeholder="http://127.0.0.1:5000">
+                placeholder="http://localhost:5000">
               <button id="s-test" class="btn-secondary">Test</button>
             </div>
             <span id="s-test-result" class="test-result"></span>
@@ -90,10 +76,10 @@
 
           <label>Chunk interval
             <div class="range-row">
-              <input id="s-chunk" type="range" min="3" max="30" step="1" value="5">
-              <span id="s-chunk-label">5 s</span>
+              <input id="s-chunk" type="range" min="3" max="30" step="1" value="3">
+              <span id="s-chunk-label">3 s</span>
             </div>
-            <small>How often audio is sent to Whisper. 10 s is recommended.</small>
+            <small>How often audio is sent to Whisper.</small>
           </label>
 
           <label>Max words per segment
@@ -144,15 +130,7 @@
             <input id="s-target-lang" type="text" maxlength="40"
               placeholder="e.g. English, Vietnamese, Spanish">
           </label>
-
-          <label>Translate which side
-            <select id="s-translate-side">
-              <option value="both">Both (You + Partner)</option>
-              <option value="partner">Partner only</option>
-              <option value="you">You only</option>
-            </select>
-          </label>
-        </section>
+          </section>
 
       </div>
 
