@@ -34,8 +34,10 @@ const tabPill       = document.getElementById('tab-pill');
 const timerEl       = document.getElementById('timer-el');
 const youBody       = document.getElementById('you-body');
 const partnerBody   = document.getElementById('partner-body');
-const youInterim            = document.getElementById('you-interim');
-const youInterimTranslation = document.getElementById('you-interim-translation');
+const youInterim                 = document.getElementById('you-interim');
+const youInterimTranslation      = document.getElementById('you-interim-translation');
+const partnerInterim             = document.getElementById('partner-interim');
+const partnerInterimTranslation  = document.getElementById('partner-interim-translation');
 const clearBtn      = document.getElementById('clear-btn');
 const copyBtn       = document.getElementById('copy-btn');
 const settingsBtn   = document.getElementById('settings-btn');
@@ -497,6 +499,8 @@ function startPartnerRecorder() {
     };
 
     rec.start();
+    partnerInterim.textContent = '🎙 listening…';
+    partnerInterimTranslation.textContent = '';
     // Hard cap: flush after chunkInterval regardless of silence
     partnerTimer = setTimeout(() => {
       if (rec.state === 'recording') rec.stop();
@@ -530,6 +534,9 @@ async function sendToWhisper(blob) {
     const decoder = new TextDecoder();
     let lineBuffer = '';
 
+    partnerInterim.textContent = '⏳ transcribing…';
+    partnerInterimTranslation.textContent = '';
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -539,12 +546,20 @@ async function sendToWhisper(blob) {
       lineBuffer  = lines.pop(); // keep incomplete trailing fragment
       for (const line of lines) {
         const text = line.trim();
-        if (text) addSegments(partnerBody, partnerSegs, text, 'partner');
+        if (!text) continue;
+        // Flash the incoming segment in the interim bar, then commit it
+        partnerInterim.textContent = text;
+        addSegments(partnerBody, partnerSegs, text, 'partner');
       }
     }
     // Flush any remaining text (segment without trailing newline)
     const remaining = lineBuffer.trim();
-    if (remaining) addSegments(partnerBody, partnerSegs, remaining, 'partner');
+    if (remaining) {
+      partnerInterim.textContent = remaining;
+      addSegments(partnerBody, partnerSegs, remaining, 'partner');
+    }
+    partnerInterim.textContent = '';
+    partnerInterimTranslation.textContent = '';
   } catch (err) {
     console.error('Whisper fetch error:', err);
     setPill(tabPill, 'warn', 'Partner: server offline');
@@ -556,6 +571,8 @@ function stopPartner() {
   if (partnerRecorder?.state === 'recording') { partnerRecorder.stop(); partnerRecorder = null; }
   if (partnerStream)   { partnerStream.getTracks().forEach(t => t.stop()); partnerStream = null; }
   if (partnerAudioCtx) { partnerAudioCtx.close(); partnerAudioCtx = null; }
+  partnerInterim.textContent = '';
+  partnerInterimTranslation.textContent = '';
   setPill(tabPill, 'idle', 'Partner: idle');
 }
 
