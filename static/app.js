@@ -20,6 +20,9 @@ function defaultCfg() {
     ollamaModel:        'llama3',
     targetLang:         'English',
     translateSide:      'both',
+    ttsEnabled:         false,
+    ttsLang:            '',
+    ttsRate:            1.0,
   };
 }
 
@@ -65,6 +68,12 @@ const sTranslateSide      = document.getElementById('s-translate-side');
 const sOllamaTest         = document.getElementById('s-ollama-test');
 const sOllamaTestResult   = document.getElementById('s-ollama-test-result');
 const ollamaBadge         = document.getElementById('ollama-badge');
+
+// TTS settings inputs
+const sTtsEnabled = document.getElementById('s-tts-enabled');
+const sTtsLang    = document.getElementById('s-tts-lang');
+const sTtsRate    = document.getElementById('s-tts-rate');
+const sTtsRateLabel = document.getElementById('s-tts-rate-label');
 
 // ── State ────────────────────────────────────────────────────────
 let isRecording    = false;
@@ -258,11 +267,25 @@ async function translateSegment(text, segEl, seg) {
     }
 
     if (seg) seg.translation = translation.trim();
+    speakTranslation(translation.trim());
   } catch (err) {
     translEl.textContent = `⚠ ${err.message}`;
     translEl.classList.add('error');
   }
   translEl.classList.remove('loading');
+}
+
+// ── Text-to-Speech ───────────────────────────────────────────────
+function speakTranslation(text) {
+  if (!cfg.ttsEnabled || !text) return;
+  const utt  = new SpeechSynthesisUtterance(text);
+  utt.lang   = cfg.ttsLang || '';
+  utt.rate   = cfg.ttsRate ?? 1.0;
+  window.speechSynthesis.speak(utt);
+}
+
+function stopSpeaking() {
+  window.speechSynthesis.cancel();
 }
 
 // ── Interim translation (debounced) ─────────────────────────────
@@ -604,6 +627,7 @@ function stopSession() {
   stopMic();
   stopPartner();
   stopTimer();
+  stopSpeaking();
   saveCurrentSession();
 
   logo.classList.remove('recording');
@@ -779,6 +803,11 @@ function openSettings() {
   sOllamaTestResult.textContent = '';
   sOllamaTestResult.className   = 'test-result';
 
+  sTtsEnabled.checked       = cfg.ttsEnabled;
+  sTtsLang.value            = cfg.ttsLang;
+  sTtsRate.value            = cfg.ttsRate;
+  sTtsRateLabel.textContent = `${cfg.ttsRate}×`;
+
   overlay.classList.remove('hidden');
 }
 
@@ -790,6 +819,10 @@ overlay.addEventListener('click', e => { if (e.target === overlay) closeSettings
 
 sChunk.addEventListener('input', () => {
   sChunkLabel.textContent = `${sChunk.value} s`;
+});
+
+sTtsRate.addEventListener('input', () => {
+  sTtsRateLabel.textContent = `${sTtsRate.value}×`;
 });
 
 sTest.addEventListener('click', async () => {
@@ -824,6 +857,9 @@ sSave.addEventListener('click', () => {
     ollamaModel:        sOllamaModel.value.trim() || defaultCfg().ollamaModel,
     targetLang:         sTargetLang.value.trim()  || defaultCfg().targetLang,
     translateSide:      sTranslateSide.value,
+    ttsEnabled:         sTtsEnabled.checked,
+    ttsLang:            sTtsLang.value.trim(),
+    ttsRate:            Number(sTtsRate.value),
   };
   saveCfg(cfg);
   sSaved.textContent = 'Saved!';
