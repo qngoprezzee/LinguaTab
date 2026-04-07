@@ -13,6 +13,7 @@ function defaultCfg() {
     endpoint:           'http://127.0.0.1:5000',
     model:              'base',
     chunkInterval:      3,
+    splitWords:         8,
     language:           '',
     micLang:            'en-US',
     translationEnabled: false,
@@ -47,8 +48,10 @@ const settingsClose = document.getElementById('settings-close');
 // Settings inputs
 const sEndpoint   = document.getElementById('s-endpoint');
 const sModel      = document.getElementById('s-model');
-const sChunk      = document.getElementById('s-chunk');
-const sChunkLabel = document.getElementById('s-chunk-label');
+const sChunk           = document.getElementById('s-chunk');
+const sChunkLabel      = document.getElementById('s-chunk-label');
+const sSplitWords      = document.getElementById('s-split-words');
+const sSplitWordsLabel = document.getElementById('s-split-words-label');
 const sLanguage   = document.getElementById('s-language');
 const sMicLang    = document.getElementById('s-mic-lang');
 const sTest       = document.getElementById('s-test');
@@ -161,27 +164,37 @@ function esc(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// Split a block of text into natural sentence-sized pieces.
-// Splits on: . ! ? — and also on commas/conjunctions when a chunk > 120 chars.
+// Split a block of text into short chunks for display and translation.
+// Priority: sentence punctuation → comma/conjunction → every cfg.splitWords words.
 function splitSentences(text) {
-  // First split on strong sentence-ending punctuation
-  const parts = text
+  // 1. Split on strong sentence-ending punctuation first
+  const byPunct = text
     .split(/(?<=[.!?。？！])\s+/)
     .flatMap(chunk => {
       chunk = chunk.trim();
       if (!chunk) return [];
-      // If still long (> 120 chars), split further on comma/semicolon boundaries
-      if (chunk.length > 120) {
-        return chunk
-          .split(/(?<=[,;،،])\s+/)
-          .map(s => s.trim())
-          .filter(Boolean);
-      }
-      return [chunk];
+      // 2. Split further on comma/semicolon
+      return chunk
+        .split(/(?<=[,;،،])\s+/)
+        .map(s => s.trim())
+        .filter(Boolean);
     })
     .filter(Boolean);
 
-  return parts.length ? parts : [text];
+  // 3. Hard word-count cap — split any remaining long chunk into ≤ cfg.splitWords
+  const result = [];
+  for (const chunk of byPunct) {
+    const words = chunk.split(/\s+/);
+    if (words.length <= cfg.splitWords) {
+      result.push(chunk);
+    } else {
+      for (let i = 0; i < words.length; i += cfg.splitWords) {
+        result.push(words.slice(i, i + cfg.splitWords).join(' '));
+      }
+    }
+  }
+
+  return result.length ? result : [text];
 }
 
 function addSegment(bodyEl, segArr, text) {
@@ -771,6 +784,8 @@ function openSettings() {
   sModel.value          = cfg.model;
   sChunk.value          = cfg.chunkInterval;
   sChunkLabel.textContent = `${cfg.chunkInterval} s`;
+  sSplitWords.value          = cfg.splitWords;
+  sSplitWordsLabel.textContent = `${cfg.splitWords} words`;
   sLanguage.value       = cfg.language;
   sMicLang.value        = cfg.micLang;
   sTestResult.textContent = '';
@@ -795,6 +810,10 @@ overlay.addEventListener('click', e => { if (e.target === overlay) closeSettings
 
 sChunk.addEventListener('input', () => {
   sChunkLabel.textContent = `${sChunk.value} s`;
+});
+
+sSplitWords.addEventListener('input', () => {
+  sSplitWordsLabel.textContent = `${sSplitWords.value} words`;
 });
 
 
@@ -823,6 +842,7 @@ sSave.addEventListener('click', () => {
     endpoint:           sEndpoint.value.trim()    || defaultCfg().endpoint,
     model:              sModel.value,
     chunkInterval:      Number(sChunk.value),
+    splitWords:         Number(sSplitWords.value),
     language:           sLanguage.value.trim(),
     micLang:            sMicLang.value.trim()     || defaultCfg().micLang,
     translationEnabled: sTranslationEnabled.checked,
