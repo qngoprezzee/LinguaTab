@@ -37,7 +37,6 @@ from typing import Optional
 import httpx
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from faster_whisper import WhisperModel
@@ -110,24 +109,21 @@ async def lifespan(app: FastAPI):
 # ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="LiveTranscribe", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
-)
-
-# Chrome Private Network Access — required for fetch() to 127.0.0.1 from Chrome 98+
+# Single middleware handles CORS + Chrome Private Network Access together.
+# CORSMiddleware is NOT used because it intercepts OPTIONS before PNA headers can be added.
 @app.middleware("http")
-async def private_network_access(request: Request, call_next):
+async def cors_and_pna(request: Request, call_next):
+    origin = request.headers.get("origin", "*")
     if request.method == "OPTIONS":
         response = Response(status_code=204)
-        response.headers["Access-Control-Allow-Origin"]          = "*"
+        response.headers["Access-Control-Allow-Origin"]          = origin
         response.headers["Access-Control-Allow-Methods"]         = "GET, POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"]         = "*"
         response.headers["Access-Control-Allow-Private-Network"] = "true"
+        response.headers["Access-Control-Max-Age"]               = "3600"
         return response
     response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"]          = origin
     response.headers["Access-Control-Allow-Private-Network"] = "true"
     return response
 
