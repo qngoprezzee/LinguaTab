@@ -15,7 +15,6 @@ function defaultCfg() {
     chunkInterval:      3,
     splitWords:         8,
     language:           '',
-    micLang:            'en-US',
     translationEnabled: false,
     ollamaUrl:          'http://localhost:11434',
     ollamaModel:        'llama3',
@@ -48,7 +47,6 @@ const sChunkLabel      = document.getElementById('s-chunk-label');
 const sSplitWords      = document.getElementById('s-split-words');
 const sSplitWordsLabel = document.getElementById('s-split-words-label');
 const sLanguage        = document.getElementById('s-language');
-const sMicLang         = document.getElementById('s-mic-lang');
 const sTest            = document.getElementById('s-test');
 const sTestResult      = document.getElementById('s-test-result');
 const sSave            = document.getElementById('s-save');
@@ -67,7 +65,11 @@ const ollamaBadge         = document.getElementById('ollama-badge');
 let isRecording   = false;
 let sessionStart  = null;
 let timerInterval = null;
-let micRecognition = null;
+
+let micStream    = null;
+let micRecorder  = null;
+let micTimer     = null;
+let micAudioCtx  = null;
 
 const youSegs = [];   // { id, text, translation, ts }
 
@@ -256,71 +258,149 @@ function translateInterim(text) {
   }, 80);
 }
 
-// ── Mic pipeline — Web Speech API ────────────────────────────────
+// ── Mic pipeline — getUserMedia → Whisper ────────────────────────
 async function startMic() {
   setPill(micPill, 'idle', 'Mic: requesting...');
 
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    setPill(micPill, 'error', 'Mic: not supported');
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (err) {
+    const msg = err.name === 'NotAllowedError'  ? 'Mic: permission denied' :
+                err.name === 'NotFoundError'    ? 'Mic: not found' :
+                err.name === 'NotReadableError' ? 'Mic: in use by another app' :
+                                                  `Mic: ${err.name}`;
+    setPill(micPill, 'error', msg);
     return;
   }
 
-  micRecognition = new SR();
-  micRecognition.continuous     = true;
-  micRecognition.interimResults = true;
-  micRecognition.lang           = cfg.micLang || 'en-US';
+  setPill(micPill, 'active', 'Mic: listening');
 
-  micRecognition.onstart = () => setPill(micPill, 'active', 'Mic: listening');
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus' : 'audio/webm';
 
-  micRecognition.onresult = event => {
-    let interim = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const r = event.results[i];
-      if (r.isFinal) {
-        const text = r[0].transcript.trim();
-        clearTimeout(_interimDebounce);
-        if (_interimAbort) { _interimAbort.abort(); _interimAbort = null; }
-        _lastInterimWords = 0;
-        youInterimTranslation.textContent = '';
-        if (text) addSegments(text);
-        youInterim.textContent = '';
-      } else {
-        interim += r[0].transcript;
+  const SILENCE_THRESHOLD = 8;
+  const SILENCE_DELAY_MS  = 250;
+  const MIN_CHUNK_MS      = 400;
+
+  micAudioCtx       = new AudioContext();
+  const source      = micAudioCtx.createMediaStreamSource(micStream);
+  const analyser    = micAudioCtx.createAnalyser();
+  analyser.fftSize  = 512;
+  source.connect(analyser);
+  const pcm = new Uint8Array(analyser.frequencyBinCount);
+
+  function getRMS() {
+    analyser.getByteTimeDomainData(pcm);
+    let sum = 0;
+    for (let i = 0; i < pcm.length; i++) { const v = (pcm[i] - 128) / 128; sum += v * v; }
+    return Math.sqrt(sum / pcm.length) * 100;
+  }
+
+  let silenceAt  = null;
+  let chunkStart = Date.now();
+
+  function pollSilence() {
+    if (!isRecording) return;
+    const now = Date.now();
+    if (getRMS() < SILENCE_THRESHOLD) {
+      if (silenceAt === null) silenceAt = now;
+      if (now - silenceAt >= SILENCE_DELAY_MS && now - chunkStart >= MIN_CHUNK_MS) {
+        silenceAt = null;
+        if (micRecorder?.state === 'recording') {
+          clearTimeout(micTimer); micTimer = null;
+          micRecorder.stop();
+          return;
+        }
       }
+    } else {
+      silenceAt = null;
     }
-    if (interim) {
-      youInterim.textContent = interim;
-      translateInterim(interim);
-    }
-  };
+    setTimeout(pollSilence, 50);
+  }
 
-  let micBlocked = false;
+  function createRecorder() {
+    const chunks = [];
+    const rec    = new MediaRecorder(micStream, { mimeType });
+    chunkStart   = Date.now();
 
-  micRecognition.onerror = e => {
-    if (e.error === 'no-speech' || e.error === 'aborted') return;
-    if (e.error === 'not-allowed') {
-      micBlocked = true;
-      setPill(micPill, 'error', 'Mic: blocked — allow mic for localhost in browser settings');
+    rec.ondataavailable = e => { if (e.data?.size > 0) chunks.push(e.data); };
+
+    rec.onstop = async () => {
+      if (!chunks.length || !isRecording) return;
+      const blob = new Blob(chunks, { type: mimeType });
+      sendMicToWhisper(blob);
+      if (isRecording && micStream?.active) {
+        micRecorder = createRecorder();
+        setTimeout(pollSilence, 50);
+      }
+    };
+
+    rec.start();
+    youInterim.textContent = '🎙 listening…';
+    micTimer = setTimeout(() => {
+      if (rec.state === 'recording') rec.stop();
+    }, cfg.chunkInterval * 1000);
+
+    return rec;
+  }
+
+  micRecorder = createRecorder();
+  pollSilence();
+}
+
+async function sendMicToWhisper(blob) {
+  const form = new FormData();
+  form.append('file',      blob, 'audio.webm');
+  form.append('model',     cfg.model || 'base');
+  form.append('max_words', cfg.splitWords ?? 8);
+  if (cfg.language) form.append('language', cfg.language);
+
+  try {
+    const res = await fetch(`${cfg.endpoint}/v1/audio/transcriptions/stream`, {
+      method: 'POST',
+      body:   form,
+    });
+    if (!res.ok) {
+      console.error('Whisper error:', res.status, await res.text());
+      setPill(micPill, 'error', `Mic: server ${res.status}`);
       return;
     }
-    setPill(micPill, 'error', `Mic: ${e.error}`);
-  };
 
-  micRecognition.onend = () => {
-    if (micBlocked) return;           // don't restart if permission was denied
-    if (isRecording) {
-      try { micRecognition.start(); } catch (_) {}
-    } else {
-      setPill(micPill, 'idle', 'Mic: idle');
+    const reader     = res.body.getReader();
+    const decoder    = new TextDecoder();
+    let lineBuffer   = '';
+
+    youInterim.textContent = '⏳ transcribing…';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      lineBuffer += decoder.decode(value, { stream: true });
+      const lines = lineBuffer.split('\n');
+      lineBuffer  = lines.pop();
+      for (const line of lines) {
+        const text = line.trim();
+        if (text) {
+          youInterim.textContent = text;
+          addSegments(text);
+        }
+      }
     }
-  };
-
-  micRecognition.start();
+    const remaining = lineBuffer.trim();
+    if (remaining) { youInterim.textContent = remaining; addSegments(remaining); }
+    youInterim.textContent = '';
+    youInterimTranslation.textContent = '';
+  } catch (err) {
+    console.error('Whisper fetch error:', err);
+    setPill(micPill, 'warn', 'Mic: server offline');
+  }
 }
 
 function stopMic() {
-  if (micRecognition) { try { micRecognition.stop(); } catch (_) {} micRecognition = null; }
+  if (micTimer)   { clearTimeout(micTimer); micTimer = null; }
+  if (micRecorder?.state === 'recording') { micRecorder.stop(); micRecorder = null; }
+  if (micStream)  { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  if (micAudioCtx){ micAudioCtx.close(); micAudioCtx = null; }
   clearTimeout(_interimDebounce);
   if (_interimAbort) { _interimAbort.abort(); _interimAbort = null; }
   _lastInterimWords = 0;
@@ -484,7 +564,6 @@ function openSettings() {
   sSplitWords.value            = cfg.splitWords;
   sSplitWordsLabel.textContent = `${cfg.splitWords} words`;
   sLanguage.value              = cfg.language;
-  sMicLang.value               = cfg.micLang;
   sTestResult.textContent      = '';
   sTestResult.className        = 'test-result';
 
@@ -533,7 +612,6 @@ sSave.addEventListener('click', () => {
     chunkInterval:      Number(sChunk.value),
     splitWords:         Number(sSplitWords.value),
     language:           sLanguage.value.trim(),
-    micLang:            sMicLang.value.trim()     || defaultCfg().micLang,
     translationEnabled: sTranslationEnabled.checked,
     ollamaUrl:          sOllamaUrl.value.trim()   || defaultCfg().ollamaUrl,
     ollamaModel:        sOllamaModel.value.trim() || defaultCfg().ollamaModel,
