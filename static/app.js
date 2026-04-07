@@ -466,7 +466,7 @@ async function sendToWhisper(blob) {
   if (cfg.language) form.append('language', cfg.language);
 
   try {
-    const res = await fetch(`${cfg.endpoint}/v1/audio/transcriptions`, {
+    const res = await fetch(`${cfg.endpoint}/v1/audio/transcriptions/stream`, {
       method: 'POST',
       body:   form,
     });
@@ -475,9 +475,26 @@ async function sendToWhisper(blob) {
       setPill(tabPill, 'error', `Partner: server ${res.status}`);
       return;
     }
-    const { text } = await res.json();
-    const trimmed  = (text || '').trim();
-    if (trimmed) addSegments(partnerBody, partnerSegs, trimmed, 'partner');
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let lineBuffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      lineBuffer += decoder.decode(value, { stream: true });
+      // Each server line is one Whisper segment — process as soon as a full line arrives
+      const lines = lineBuffer.split('\n');
+      lineBuffer  = lines.pop(); // keep incomplete trailing fragment
+      for (const line of lines) {
+        const text = line.trim();
+        if (text) addSegments(partnerBody, partnerSegs, text, 'partner');
+      }
+    }
+    // Flush any remaining text (segment without trailing newline)
+    const remaining = lineBuffer.trim();
+    if (remaining) addSegments(partnerBody, partnerSegs, remaining, 'partner');
   } catch (err) {
     console.error('Whisper fetch error:', err);
     setPill(tabPill, 'warn', 'Partner: server offline');

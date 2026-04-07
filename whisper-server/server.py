@@ -243,6 +243,58 @@ async def transcribe(
 
     return {"text": text}
 
+@app.post("/v1/audio/transcriptions/stream")
+async def transcribe_stream(
+    file:     UploadFile = File(...),
+    model:    str        = Form("base"),
+    language: str        = Form(""),
+    prompt:   str        = Form(""),
+):
+    """Stream transcription segments as plain-text lines, one segment per line.
+    Each line is flushed as soon as faster-whisper produces it, so the client
+    can start translating early sentences while later ones are still being decoded.
+    """
+    if _model is None:
+        raise HTTPException(503, "Model not loaded yet — please wait")
+
+    audio_bytes = await file.read()
+    if not audio_bytes:
+        raise HTTPException(400, "Empty audio file")
+
+    log.info(f"Stream-transcribing  {len(audio_bytes)/1024:.1f} KB  lang={language or 'auto'}")
+
+    SENTENCE_END = frozenset('.!?。？！…')
+    MAX_BUFFER   = 120   # flush mid-sentence if buffer grows beyond this many chars
+
+    def segment_generator():
+        segments, info = _model.transcribe(
+            io.BytesIO(audio_bytes),
+            language=language or None,
+            initial_prompt=prompt or None,
+            beam_size=5,
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 300},
+            max_new_tokens=60,          # keep individual whisper segments short
+            condition_on_previous_text=True,
+        )
+        buf = ''
+        full = []
+        for seg in segments:
+            text = seg.text.strip()
+            if not text:
+                continue
+            full.append(text)
+            buf = (buf + ' ' + text).strip()
+            # Yield whenever we reach a sentence boundary or the buffer is long
+            if buf[-1] in SENTENCE_END or len(buf) >= MAX_BUFFER:
+                yield buf + '\n'
+                buf = ''
+        if buf:                         # flush any trailing fragment
+            yield buf + '\n'
+        log.info(f"Stream done ({info.language}, {info.duration:.1f}s): {' '.join(full)[:120]}")
+
+    return StreamingResponse(segment_generator(), media_type="text/plain")
+
 # ── Serve the web app ──────────────────────────────────────────────────────────
 if STATIC_DIR.exists():
     # Serve index.html for the root path explicitly
