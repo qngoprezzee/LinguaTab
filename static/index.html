@@ -96,14 +96,6 @@
             <small>How often audio is sent to Whisper. 10 s is recommended.</small>
           </label>
 
-          <label>Max words per segment
-            <div class="range-row">
-              <input id="s-split-words" type="range" min="3" max="20" step="1" value="8">
-              <span id="s-split-words-label">8 words</span>
-            </div>
-            <small>Force-cut segments after this many words. Lower = shorter, more frequent translations.</small>
-          </label>
-
           <label>Language hint <small>(optional)</small>
             <input id="s-language" type="text" maxlength="10"
               placeholder="e.g. en, vi, es — blank = auto-detect">

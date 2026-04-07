@@ -336,15 +336,13 @@ async def transcribe(
 
 @app.post("/v1/audio/transcriptions/stream")
 async def transcribe_stream(
-    file:       UploadFile = File(...),
-    model:      str        = Form("base"),
-    language:   str        = Form(""),
-    prompt:     str        = Form(""),
-    max_words:  int        = Form(8),
+    file:     UploadFile = File(...),
+    model:    str        = Form("base"),
+    language: str        = Form(""),
+    prompt:   str        = Form(""),
 ):
-    """Stream transcription segments as plain-text lines, one segment per line.
-    Each line is flushed as soon as faster-whisper produces it, so the client
-    can start translating early sentences while later ones are still being decoded.
+    """Stream transcription segments as plain-text lines, one per faster-whisper segment.
+    Each line is yielded as soon as it is decoded — the whole chunk is one fixed time window.
     """
     if _model is None:
         raise HTTPException(503, "Model not loaded yet — please wait")
@@ -355,9 +353,6 @@ async def transcribe_stream(
 
     log.info(f"Stream-transcribing  {len(audio_bytes)/1024:.1f} KB  lang={language or 'auto'}")
 
-    SENTENCE_END = frozenset('.!?。？！…')
-    MAX_WORDS    = max(1, max_words)
-
     def segment_generator():
         segments, info = _model.transcribe(
             io.BytesIO(audio_bytes),
@@ -366,40 +361,16 @@ async def transcribe_stream(
             beam_size=5,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 300},
-            word_timestamps=True,
-            condition_on_previous_text=True,
         )
-        # Filter CJK hallucinations when the detected language is not CJK
         filter_cjk = info.language not in _CJK_LANGS
-
-        word_buf = []
         all_text = []
         for seg in segments:
-            words = seg.words or []
-            if not words:
-                # no word timestamps — fall back to segment text
-                text = seg.text.strip()
-                if filter_cjk and _has_cjk(text):
-                    text = _strip_cjk(text)
-                if text:
-                    all_text.append(text)
-                    yield text + '\n'
-                continue
-            for w in words:
-                token = w.word.strip()
-                if not token:
-                    continue
-                # Drop CJK tokens entirely when they are hallucinations
-                if filter_cjk and _has_cjk(token):
-                    continue
-                word_buf.append(token)
-                all_text.append(token)
-                last_char = token[-1]
-                if last_char in SENTENCE_END or len(word_buf) >= MAX_WORDS:
-                    yield ' '.join(word_buf) + '\n'
-                    word_buf = []
-        if word_buf:
-            yield ' '.join(word_buf) + '\n'
+            text = seg.text.strip()
+            if filter_cjk and _has_cjk(text):
+                text = _strip_cjk(text)
+            if text:
+                all_text.append(text)
+                yield text + '\n'
         log.info(f"Stream done ({info.language}, {info.duration:.1f}s): {' '.join(all_text)[:120]}")
 
     return StreamingResponse(segment_generator(), media_type="text/plain")
