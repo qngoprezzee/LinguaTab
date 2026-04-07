@@ -286,41 +286,24 @@ function translateInterim(text) {
     _interimAbort = new AbortController();
     _lastInterimWords = wordCount;
 
-    // Don't blank the display — keep previous translation visible until first token arrives
+    // Use the fast Google Translate endpoint — ~100 ms, no LLM warmup
     try {
-      const res = await fetch(`${cfg.endpoint}/v1/translate/stream`, {
+      const res = await fetch(`${cfg.endpoint}/v1/translate/realtime`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           text,
           target_lang: cfg.targetLang,
-          model:       cfg.ollamaModel,
-          ollama_url:  cfg.ollamaUrl,
         }),
         signal: _interimAbort.signal,
       });
       if (!res.ok) { youInterimTranslation.textContent = ''; return; }
-
-      const reader  = res.body.getReader();
-      const decoder = new TextDecoder();
-      let out = '';
-      let firstToken = true;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        if (firstToken) {
-          // Only replace previous translation when new one actually starts arriving
-          youInterimTranslation.textContent = '';
-          firstToken = false;
-        }
-        out += chunk;
-        youInterimTranslation.textContent = out;
-      }
+      const { translation } = await res.json();
+      if (translation) youInterimTranslation.textContent = translation;
     } catch (e) {
       if (e.name !== 'AbortError') youInterimTranslation.textContent = '';
     }
-  }, 150);
+  }, 80);
 }
 
 // ── Mic pipeline — Web Speech API ────────────────────────────────

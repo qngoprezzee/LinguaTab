@@ -152,6 +152,71 @@ async def ollama_health():
         pass
     raise HTTPException(503, "Ollama not reachable")
 
+# ── Fast translation via Google Translate (no API key needed) ──────────────────
+# Maps common language names → BCP-47 codes accepted by Google Translate
+_LANG_CODES: dict[str, str] = {
+    "afrikaans":"af","albanian":"sq","amharic":"am","arabic":"ar","armenian":"hy",
+    "azerbaijani":"az","basque":"eu","belarusian":"be","bengali":"bn","bosnian":"bs",
+    "bulgarian":"bg","catalan":"ca","cebuano":"ceb","chinese":"zh","corsican":"co",
+    "croatian":"hr","czech":"cs","danish":"da","dutch":"nl","english":"en",
+    "esperanto":"eo","estonian":"et","finnish":"fi","french":"fr","frisian":"fy",
+    "galician":"gl","georgian":"ka","german":"de","greek":"el","gujarati":"gu",
+    "haitian creole":"ht","hausa":"ha","hawaiian":"haw","hebrew":"iw","hindi":"hi",
+    "hmong":"hmn","hungarian":"hu","icelandic":"is","igbo":"ig","indonesian":"id",
+    "irish":"ga","italian":"it","japanese":"ja","javanese":"jw","kannada":"kn",
+    "kazakh":"kk","khmer":"km","kinyarwanda":"rw","korean":"ko","kurdish":"ku",
+    "kyrgyz":"ky","lao":"lo","latin":"la","latvian":"lv","lithuanian":"lt",
+    "luxembourgish":"lb","macedonian":"mk","malagasy":"mg","malay":"ms",
+    "malayalam":"ml","maltese":"mt","maori":"mi","marathi":"mr","mongolian":"mn",
+    "myanmar":"my","nepali":"ne","norwegian":"no","nyanja":"ny","odia":"or",
+    "pashto":"ps","persian":"fa","polish":"pl","portuguese":"pt","punjabi":"pa",
+    "romanian":"ro","russian":"ru","samoan":"sm","scots gaelic":"gd","serbian":"sr",
+    "sesotho":"st","shona":"sn","sindhi":"sd","sinhala":"si","slovak":"sk",
+    "slovenian":"sl","somali":"so","spanish":"es","sundanese":"su","swahili":"sw",
+    "swedish":"sv","tagalog":"tl","tajik":"tg","tamil":"ta","tatar":"tt",
+    "telugu":"te","thai":"th","turkish":"tr","turkmen":"tk","ukrainian":"uk",
+    "urdu":"ur","uyghur":"ug","uzbek":"uz","vietnamese":"vi","welsh":"cy",
+    "xhosa":"xh","yiddish":"yi","yoruba":"yo","zulu":"zu",
+}
+
+def _to_lang_code(name: str) -> str:
+    """Convert a language name or code to a Google Translate BCP-47 code."""
+    s = name.strip().lower()
+    return _LANG_CODES.get(s, s)   # fall back to the value as-is (may already be a code)
+
+@app.post("/v1/translate/realtime")
+async def translate_realtime(req: TranslateRequest):
+    """Ultra-low-latency translation via Google Translate (~100 ms).
+    Used for live interim results while speaking. No API key required."""
+    if not req.text.strip():
+        return {"translation": ""}
+
+    tl = _to_lang_code(req.target_lang)
+    sl = _to_lang_code(req.source_lang) if req.source_lang else "auto"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                "https://translate.googleapis.com/translate_a/single",
+                params={
+                    "client": "gtx",
+                    "sl": sl,
+                    "tl": tl,
+                    "dt": "t",
+                    "q": req.text,
+                },
+                timeout=5.0,
+            )
+            r.raise_for_status()
+            data = r.json()
+            translation = "".join(part[0] for part in data[0] if part[0])
+            return {"translation": translation}
+    except httpx.TimeoutException:
+        raise HTTPException(504, "Translation timed out")
+    except Exception as e:
+        log.error(f"Realtime translate error: {e}")
+        raise HTTPException(502, str(e))
+
 def _build_prompt(req: TranslateRequest) -> str:
     src = f" from {req.source_lang}" if req.source_lang else ""
     return (
