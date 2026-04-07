@@ -164,37 +164,18 @@ function esc(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// Split a block of text into short chunks for display and translation.
-// Priority: sentence punctuation → comma/conjunction → every cfg.splitWords words.
+// Split on sentence punctuation and commas only.
+// Word-count splitting is handled server-side via max_words — don't double-split here.
 function splitSentences(text) {
-  // 1. Split on strong sentence-ending punctuation first
-  const byPunct = text
+  const parts = text
     .split(/(?<=[.!?。？！])\s+/)
     .flatMap(chunk => {
       chunk = chunk.trim();
       if (!chunk) return [];
-      // 2. Split further on comma/semicolon
-      return chunk
-        .split(/(?<=[,;،،])\s+/)
-        .map(s => s.trim())
-        .filter(Boolean);
+      return chunk.split(/(?<=[,;])\s+/).map(s => s.trim()).filter(Boolean);
     })
     .filter(Boolean);
-
-  // 3. Hard word-count cap — split any remaining long chunk into ≤ cfg.splitWords
-  const result = [];
-  for (const chunk of byPunct) {
-    const words = chunk.split(/\s+/);
-    if (words.length <= cfg.splitWords) {
-      result.push(chunk);
-    } else {
-      for (let i = 0; i < words.length; i += cfg.splitWords) {
-        result.push(words.slice(i, i + cfg.splitWords).join(' '));
-      }
-    }
-  }
-
-  return result.length ? result : [text];
+  return parts.length ? parts : [text];
 }
 
 function addSegment(bodyEl, segArr, text) {
@@ -534,7 +515,8 @@ function startPartnerRecorder() {
 async function sendToWhisper(blob) {
   const form = new FormData();
   form.append('file',  blob, 'audio.webm');
-  form.append('model', cfg.model || 'base');
+  form.append('model',     cfg.model || 'base');
+  form.append('max_words', cfg.splitWords ?? 8);
   if (cfg.language) form.append('language', cfg.language);
 
   try {
